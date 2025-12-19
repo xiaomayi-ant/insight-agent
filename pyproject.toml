@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "insight-agent"
+version = "0.1.0"
+description = "Local utilities for VikingDB -> MySQL join and LangGraph MVP."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "langgraph>=0.2.0",
+  "langchain-core>=0.2.0",
+  "langchain-community>=0.2.0",
+  "pydantic>=2.6",
+  "pydantic-settings>=2.2",
+  "dashscope>=1.20.0",
+  "fastapi>=0.110.0",
+  "uvicorn>=0.24.0",
+  "requests>=2.31.0",
+  "volcengine>=1.0.179",
+  "pymysql>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9.0.0",
+]
+
+[tool.setuptools]
+# Keep root clean: ship only packages under `src/`.
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
