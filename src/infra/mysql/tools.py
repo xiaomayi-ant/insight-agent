@@ -91,14 +91,19 @@ def compose_mysql_sql(influencer: str, material_ids: List[str], table: str, requ
 
     sql = f"""
 select
-  timeline,
-  liveShowCountForRoi2V2,
-  statCostForRoi2,
-  roi2MaterialVideoName,
-  materialId
+  timeline,                                    -- 数据时间戳
+  statCostForRoi2,                            -- 整体消耗
+  roi2MaterialVideoName,                      -- 广告素材视频名称
+  materialId,                                 -- 素材ID
+  roi2MaterialUploadTime,                     -- 广告素材上传时间
+  totalPrepayAndPayOrderRoi2,                  -- 整体ROI
+  liveShowCountForRoi2V2,                     -- 整体曝光次数
+  liveWatchCountForRoi2V2                    -- 整体点击次数
 from {table}
 where roi2MaterialVideoName like {like_expr}
   and {in_clause}
+  and liveShowCountForRoi2V2 > 0
+  and liveWatchCountForRoi2V2 > 0
 """.strip()
 
     return {"sql": sql, "influencer": influencer, "material_id_count": material_id_count}

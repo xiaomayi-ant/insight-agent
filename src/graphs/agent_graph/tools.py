@@ -7,7 +7,7 @@ from langchain_core.tools import StructuredTool
 
 from src.core.settings import AppSettings
 from src.domain.state import FrontendSearchInput
-from src.infra.vkdb.client import MULTI_MODAL_PATH, VikingDBDataClient, build_influencer_filter, parse_output_fields
+from src.infra.vkdb.client import MULTI_MODAL_PATH, RANDOM_PATH, VikingDBDataClient, build_influencer_filter, parse_output_fields
 
 
 def _build_vkdb_request(settings: AppSettings, user_input: FrontendSearchInput) -> Dict[str, Any]:
@@ -60,6 +60,13 @@ def _build_vkdb_request(settings: AppSettings, user_input: FrontendSearchInput) 
         logger.info(f"✅ [VikingDB] 添加filter参数: influencer={influence}")
 
     logger.info(f"📋 [VikingDB] 最终请求体: text={'有' if text else '无'}, image={'有' if image else '无'}, video={'有' if video else '无'}, filter={'有' if req_body.get('filter') else '无'}")
+    
+    # 记录完整的请求参数用于诊断缓存问题
+    import time
+    request_id = f"{int(time.time() * 1000)}"  # 毫秒时间戳作为请求ID
+    logger.info(f"🔍 [VikingDB诊断] 请求ID: {request_id}")
+    logger.info(f"🔍 [VikingDB诊断] 完整请求参数: {json.dumps(req_body, ensure_ascii=False, sort_keys=True)}")
+    
     return req_body
 
 
@@ -115,4 +122,74 @@ def make_vkdb_search_tool(settings: AppSettings) -> StructuredTool:
         ),
     )
 
+
+def _build_random_request(settings: AppSettings, user_input: FrontendSearchInput) -> Dict[str, Any]:
+    """构建随机检索请求"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    influence = (user_input.influence or "").strip()
+    limit = user_input.limit if user_input.limit is not None else settings.vikingdb_default_limit
+    output_fields = (
+        user_input.output_fields
+        if user_input.output_fields is not None
+        else parse_output_fields(settings.vikingdb_default_output_fields)
+    )
+    
+    req_body: Dict[str, Any] = {
+        "collection_name": settings.vikingdb_collection_name,
+        "index_name": settings.resolve_index_name(),
+        "limit": int(limit),
+        "output_fields": output_fields,
+    }
+    
+    # 添加influencer过滤
+    if settings.vikingdb_enable_influence_filter and influence:
+        req_body["filter"] = build_influencer_filter(influence)
+        logger.info(f"✅ [VikingDB随机检索] 添加filter参数: influencer={influence}")
+    
+    logger.info(f"📋 [VikingDB随机检索] 请求体: filter={'有' if req_body.get('filter') else '无'}, limit={limit}")
+    logger.info(f"🔍 [VikingDB随机检索] 完整请求参数: {json.dumps(req_body, ensure_ascii=False, sort_keys=True)}")
+    
+    return req_body
+
+
+def vkdb_random_search(settings: AppSettings, user_input: FrontendSearchInput) -> Dict[str, Any]:
+    """执行随机检索"""
+    req_body = _build_random_request(settings, user_input)
+    client = VikingDBDataClient(
+        ak=settings.vikingdb_ak,
+        sk=settings.vikingdb_sk,
+        host=settings.vikingdb_host,
+        region=settings.vikingdb_region,
+        service=settings.vikingdb_service,
+        timeout_s=settings.vikingdb_timeout_s,
+    )
+    return client.post_json(RANDOM_PATH, req_body)
+
+
+def make_vkdb_random_search_tool(settings: AppSettings) -> StructuredTool:
+    """创建随机检索工具"""
+    def _run(
+        influence: str = "",
+        limit: Optional[int] = None,
+        output_fields: Optional[List[str]] = None,
+    ) -> str:
+        user_input = FrontendSearchInput(
+            influence=influence,
+            limit=limit,
+            output_fields=output_fields,
+        )
+        resp = vkdb_random_search(settings, user_input)
+        return json.dumps(resp, ensure_ascii=False)
+    
+    return StructuredTool.from_function(
+        func=_run,
+        name="vkdb_random_search",
+        description=(
+            "Search VikingDB via random endpoint. "
+            "Input: influence/limit/output_fields. "
+            "Output: raw JSON string response."
+        ),
+    )
 

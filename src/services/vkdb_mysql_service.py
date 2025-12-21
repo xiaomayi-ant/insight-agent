@@ -164,6 +164,12 @@ def vkdb_response_to_mysql_join(
     )
     sql = sql_out["sql"]
     
+    # 记录SQL用于调试
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"🔍 [MySQL Join] 提取了 {len(material_ids)} 个materialId")
+    logger.info(f"🔍 [MySQL Join] 执行的SQL: {sql}")
+    
     mysql_out = query_mysql.invoke({"sql": sql, "max_rows": mysql_max_rows})
     analysis = analyze_roi2_rows.invoke({"rows": mysql_out["rows"]})
     
@@ -177,6 +183,7 @@ def vkdb_response_to_mysql_join(
         "mysql": {
             "table": mysql_table,
             "row_count": mysql_out["row_count"],
+            "rows": mysql_out["rows"],  # 添加 rows 字段供数据聚合使用
         },
         "analysis": analysis,
     }

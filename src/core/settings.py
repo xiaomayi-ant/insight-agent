@@ -38,6 +38,12 @@ class AppSettings(BaseSettings):
         default="video_id,landscape_video,influencer,video_duration,content_structure",
         validation_alias="VIKINGDB_OUTPUT_FIELDS",
     )
+    
+    # ---- VikingDB 检索方式配置 ----
+    vikingdb_search_method: str = Field(
+        default="multi_modal",
+        validation_alias="VIKINGDB_SEARCH_METHOD"
+    )  # 可选值: "multi_modal" 或 "random"
 
     # ---- Qwen (DashScope) ----
     dashscope_api_key: str = Field(validation_alias="DASHSCOPE_API_KEY")
@@ -65,6 +71,22 @@ class AppSettings(BaseSettings):
     
     # ---- CORS 配置 ----
     cors_origins: Optional[str] = Field(default=None, validation_alias="CORS_ORIGINS")
+    
+    # ---- 意图结构化配置 ----
+    intent_structurize_enabled: bool = Field(default=True, validation_alias="INTENT_STRUCTURIZE_ENABLED")
+    intent_structurize_concurrency: int = Field(default=15, ge=1, le=50, validation_alias="INTENT_STRUCTURIZE_CONCURRENCY")
+    intent_structurize_timeout: int = Field(default=20, ge=5, le=60, validation_alias="INTENT_STRUCTURIZE_TIMEOUT")
+    
+    # ---- 数据聚合配置 ----
+    data_aggregate_min_count: int = Field(default=2, ge=1, validation_alias="DATA_AGGREGATE_MIN_COUNT")
+    
+    # ---- 日志配置 ----
+    log_dir: str = Field(default="logs", validation_alias="LOG_DIR")
+    log_file: str = Field(default="app.log", validation_alias="LOG_FILE")
+    log_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1024 * 1024, validation_alias="LOG_MAX_BYTES")  # 默认10MB
+    log_backup_count: int = Field(default=5, ge=1, le=20, validation_alias="LOG_BACKUP_COUNT")
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    log_console_output: bool = Field(default=True, validation_alias="LOG_CONSOLE_OUTPUT")
 
     def resolve_index_name(self) -> str:
         idx = (self.vikingdb_index_name or "").strip()

@@ -69,6 +69,7 @@ async def agent_stream(
         stream_started = False  # 标记流式是否已开始
         stream_end_logged = False  # 标记是否已输出结尾日志
         total_tokens_estimate = None  # 估算总token数（用于判断中间位置）
+        accumulated_text = ""  # 记录已发送的文本内容，用于检测图表增量
         
         async for event in graph.astream_events(initial_state, version="v1"):
             event_type = event.get("event", "")
@@ -91,6 +92,7 @@ async def agent_stream(
                     chunk = event.get("data", {}).get("chunk")
                     if chunk and hasattr(chunk, "content") and chunk.content:
                         streamed_token = True
+                        accumulated_text += chunk.content  # 累积已发送的文本
                         payload = json.dumps(
                             {"type": "token", "content": chunk.content},
                             ensure_ascii=False
@@ -119,8 +121,10 @@ async def agent_stream(
                 if node_name in ["llm_summarize", "simple_chat"]:
                     # 获取节点输出
                     output = event.get("data", {}).get("output", {})
+                    logger.info(f"🔍 [调试] agent_stream - 捕获到 {node_name} 节点结束，output 类型: {type(output)}, 是否为dict: {isinstance(output, dict)}")
                     if isinstance(output, dict):
                         final_state = output
+                        logger.info(f"🔍 [调试] agent_stream - 设置 final_state，包含字段: {list(final_state.keys())}")
                         
                         # 结尾日志：输出3条（在节点结束时）
                         if stream_started and not stream_end_logged:
@@ -130,6 +134,8 @@ async def agent_stream(
                             logger.info(f"📤 [服务] agent_stream - 流式结束 [总计 {token_count} tokens, 内容 {summary_len} 字符]")
                             logger.info(f"📋 [服务] agent_stream - 捕获节点最终状态 ({node_name})，包含字段: {list(final_state.keys())}")
                             logger.info(f"✅ [服务] agent_stream - 流式传输完成")
+                    else:
+                        logger.warning(f"⚠️ [调试] agent_stream - {node_name} 节点输出格式不正确，output: {output}")
                 
                 # 方法2：检查是否是整个 Graph 的结束（Root Run，没有 langgraph_node）
                 elif not node_name:
@@ -190,6 +196,29 @@ async def agent_stream(
                         ensure_ascii=False
                     )
                     yield f"data: {payload}\n\n"
+        
+        # Graph执行完成后，检查final_summary并流式输出（兜底逻辑）
+        # 检查是否有图表增量需要补发
+        logger.info(f"🔍 [调试] agent_stream - 循环结束，final_state: {final_state is not None}, streamed_token: {streamed_token}, accumulated_text长度: {len(accumulated_text)}")
+        if final_state and streamed_token:
+            final_summary = final_state.get("final_summary", "")
+            logger.info(f"🔍 [调试] agent_stream - final_summary存在: {final_summary is not None}, 长度: {len(final_summary) if final_summary else 0}")
+            if final_summary and len(final_summary) > len(accumulated_text):
+                # 计算差值（即图表 Markdown 部分）
+                chart_part = final_summary[len(accumulated_text):]
+                if chart_part.strip():
+                    logger.info(f"📊 [服务] agent_stream - 检测到图表增量，正在补发 (长度: {len(chart_part)} 字符)")
+                    payload = json.dumps(
+                        {"type": "token", "content": chart_part},
+                        ensure_ascii=False
+                    )
+                    yield f"data: {payload}\n\n"
+            elif final_summary:
+                logger.info(f"🔍 [调试] agent_stream - final_summary长度 ({len(final_summary)}) 不大于 accumulated_text长度 ({len(accumulated_text)})，无需补发")
+        elif not final_state:
+            logger.warning(f"⚠️ [调试] agent_stream - final_state 为 None，无法检查图表增量")
+        elif not streamed_token:
+            logger.info(f"🔍 [调试] agent_stream - 没有流式token，跳过图表增量检查")
         
         # Graph执行完成后，检查final_summary并流式输出（兜底逻辑）
         # 只有在未产生过流式token时，才用final_summary兜底输出，避免重复

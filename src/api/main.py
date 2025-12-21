@@ -7,13 +7,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.core.settings import load_settings
+from src.core.logging_config import setup_logging_from_settings
 from .routers.v1 import router as v1_router
 
-# 配置日志，确保能看到节点执行过程
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# 加载配置并设置日志
+_settings = load_settings()
+setup_logging_from_settings(_settings)
 
 
 def _parse_cors_origins() -> List[str]:

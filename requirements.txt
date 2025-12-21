@@ -9,5 +9,7 @@ uvicorn>=0.24.0
 requests>=2.31.0
 volcengine>=1.0.179
 pymysql>=1.1.0
+pandas>=2.0.0
+matplotlib>=3.7.0
 
 

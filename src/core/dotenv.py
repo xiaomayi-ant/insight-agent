@@ -29,7 +29,16 @@ def load_dotenv(dotenv_path: str = ".env", override: bool = False) -> None:
         if k.startswith("export "):
             k = k[len("export ") :].strip()
 
-        if len(v) >= 2 and ((v[0] == v[-1] == '"') or (v[0] == v[-1] == "'")):
+        # Check if value is quoted before processing
+        is_quoted = len(v) >= 2 and ((v[0] == v[-1] == '"') or (v[0] == v[-1] == "'"))
+        
+        # Remove inline comments (everything after #) only for non-quoted values
+        # Quoted values may contain # as part of the value itself
+        if not is_quoted and "#" in v:
+            v = v.split("#", 1)[0].strip()
+        
+        # Remove quotes after handling comments
+        if is_quoted:
             v = v[1:-1]
 
         if not override and k in os.environ:

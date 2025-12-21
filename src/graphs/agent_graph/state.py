@@ -20,8 +20,18 @@ class AgentState(MessagesState):
     # MySQL Join相关（自动执行，如果vkdb_response存在）
     mysql_join_result: Optional[Dict[str, Any]] = None  # MySQL Join分析结果
     
+    # 新增：意图结构化结果
+    structured_intents: Optional[list[Dict[str, Any]]] = None  # List[{"materialId": str, "structured_intent": dict}]
+    
+    # 新增：数据聚合结果
+    aggregated_stats: Optional[str] = None  # CSV字符串
+    
+    # 新增：LLM分析结果
+    analysis_result: Optional[Dict[str, Any]] = None  # 包含summary和plot_data
+    
     # LLM汇总结果（最终输出）
     final_summary: Optional[str] = None
+    chart_data: Optional[Dict[str, Any]] = None  # 图表数据（Chart.js 格式）
     
     # 错误处理
     error: Optional[str] = None
