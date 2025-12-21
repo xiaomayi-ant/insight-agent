@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import StructuredTool
 
@@ -11,6 +11,9 @@ from src.infra.vkdb.client import MULTI_MODAL_PATH, VikingDBDataClient, build_in
 
 
 def _build_vkdb_request(settings: AppSettings, user_input: FrontendSearchInput) -> Dict[str, Any]:
+    import logging
+    logger = logging.getLogger(__name__)
+    
     influence = (user_input.influence or "").strip()
     text = (user_input.text or "").strip()
     image = (user_input.image or "").strip()
@@ -18,6 +21,7 @@ def _build_vkdb_request(settings: AppSettings, user_input: FrontendSearchInput) 
 
     if not text and influence:
         text = influence
+        logger.info(f"🔄 [VikingDB] text为空，使用influence作为text: {text}")
 
     limit = user_input.limit if user_input.limit is not None else settings.vikingdb_default_limit
     need_instruction = user_input.need_instruction if user_input.need_instruction is not None else settings.vikingdb_need_instruction
@@ -37,17 +41,25 @@ def _build_vkdb_request(settings: AppSettings, user_input: FrontendSearchInput) 
     if text:
         req_body["text"] = text
         req_body["need_instruction"] = bool(need_instruction)
+        logger.info(f"✅ [VikingDB] 添加text参数: {text[:50]}...")
+    else:
+        logger.warning(f"⚠️ [VikingDB] text参数为空，可能导致API错误")
+    
     if image:
         req_body["image"] = image
+        logger.info(f"✅ [VikingDB] 添加image参数")
     if video:
         vmap: Dict[str, Any] = {"value": video}
         if user_input.video_fps is not None:
             vmap["fps"] = float(user_input.video_fps)
         req_body["video"] = vmap
+        logger.info(f"✅ [VikingDB] 添加video参数")
 
     if settings.vikingdb_enable_influence_filter and influence:
         req_body["filter"] = build_influencer_filter(influence)
+        logger.info(f"✅ [VikingDB] 添加filter参数: influencer={influence}")
 
+    logger.info(f"📋 [VikingDB] 最终请求体: text={'有' if text else '无'}, image={'有' if image else '无'}, video={'有' if video else '无'}, filter={'有' if req_body.get('filter') else '无'}")
     return req_body
 
 
@@ -65,8 +77,31 @@ def vkdb_multi_modal_search(settings: AppSettings, user_input: FrontendSearchInp
 
 
 def make_vkdb_search_tool(settings: AppSettings) -> StructuredTool:
-    def _run(**kwargs: Any) -> str:
-        user_input = FrontendSearchInput.model_validate(kwargs)
+    """
+    StructuredTool 需要显式的参数签名，否则 **kwargs 会被过滤掉，
+    导致 model_validate 收到默认空值（text/influence 变空）。
+    """
+
+    def _run(
+        influence: str = "",
+        text: str = "",
+        image: str = "",
+        video: str = "",
+        video_fps: Optional[float] = None,
+        limit: Optional[int] = None,
+        need_instruction: Optional[bool] = None,
+        output_fields: Optional[List[str]] = None,
+    ) -> str:
+        user_input = FrontendSearchInput(
+            influence=influence,
+            text=text,
+            image=image,
+            video=video,
+            video_fps=video_fps,
+            limit=limit,
+            need_instruction=need_instruction,
+            output_fields=output_fields,
+        )
         resp = vkdb_multi_modal_search(settings, user_input)
         return json.dumps(resp, ensure_ascii=False)
 

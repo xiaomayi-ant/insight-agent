@@ -119,33 +119,54 @@ def _extract_material_ids_and_tos(vkdb_resp: Dict[str, Any], max_n: int) -> Tupl
     return (material_ids, tos_urls)
 
 
-def vkdb_to_mysql_join(req: VkdbMysqlJoinRequest) -> Dict[str, Any]:
-    load_dotenv(req.env_file, override=False)
-
-    influencer = (req.influencer or "").strip()
+def vkdb_response_to_mysql_join(
+    vkdb_response: Dict[str, Any],
+    influencer: str,
+    mysql_max_in: int = 100,
+    mysql_table: str = "mandasike_qianchuan_room_daily_dimension",
+    mysql_max_rows: int = 5000,
+    require_in: bool = True,
+) -> Dict[str, Any]:
+    """
+    直接从已有的VikingDB响应结果进行MySQL Join（用于Graph节点，避免重复搜索）
+    
+    Args:
+        vkdb_response: 已有的VikingDB搜索结果
+        influencer: 影响者名称
+        mysql_max_in: 最大提取的material_ids数量
+        mysql_table: MySQL表名
+        mysql_max_rows: MySQL查询最大返回行数
+        require_in: 如果material_ids为空，是否强制返回空结果
+    
+    Returns:
+        Join结果字典
+    """
+    if not vkdb_response:
+        raise RuntimeError("vkdb_response is required")
+    
+    influencer = (influencer or "").strip()
     if not influencer:
         raise RuntimeError("influencer is required")
-
-    vkdb_resp = _vkdb_search(influencer=influencer, limit=req.vkdb_limit)
-    returned = len(((vkdb_resp.get("result") or {}).get("data") or [])) if isinstance(vkdb_resp, dict) else 0
-
-    material_ids, tos_urls = _extract_material_ids_and_tos(vkdb_resp, max_n=req.mysql_max_in)
+    
+    returned = len(((vkdb_response.get("result") or {}).get("data") or [])) if isinstance(vkdb_response, dict) else 0
+    
+    material_ids, tos_urls = _extract_material_ids_and_tos(vkdb_response, max_n=mysql_max_in)
     if not material_ids:
         raise RuntimeError("No material_ids extracted from vkdb landscape_video. Check output_fields and URL format.")
-
+    
     sql_out = compose_mysql_sql.invoke(
         {
             "influencer": influencer,
             "material_ids": material_ids,
-            "table": req.mysql_table,
-            "require_in": req.require_in,
+            "table": mysql_table,
+            "require_in": require_in,
         }
     )
     sql = sql_out["sql"]
-
-    mysql_out = query_mysql.invoke({"sql": sql, "max_rows": req.mysql_max_rows})
+    
+    mysql_out = query_mysql.invoke({"sql": sql, "max_rows": mysql_max_rows})
     analysis = analyze_roi2_rows.invoke({"rows": mysql_out["rows"]})
-
+    
     return {
         "influencer": influencer,
         "vkdb": {
@@ -154,10 +175,31 @@ def vkdb_to_mysql_join(req: VkdbMysqlJoinRequest) -> Dict[str, Any]:
             "material_ids": material_ids,
         },
         "mysql": {
-            "table": req.mysql_table,
+            "table": mysql_table,
             "row_count": mysql_out["row_count"],
         },
         "analysis": analysis,
     }
+
+
+def vkdb_to_mysql_join(req: VkdbMysqlJoinRequest) -> Dict[str, Any]:
+    """
+    从VikingDB搜索到MySQL Join的完整流程（用于独立脚本，包含搜索步骤）
+    """
+    load_dotenv(req.env_file, override=False)
+
+    influencer = (req.influencer or "").strip()
+    if not influencer:
+        raise RuntimeError("influencer is required")
+
+    vkdb_resp = _vkdb_search(influencer=influencer, limit=req.vkdb_limit)
+    return vkdb_response_to_mysql_join(
+        vkdb_response=vkdb_resp,
+        influencer=influencer,
+        mysql_max_in=req.mysql_max_in,
+        mysql_table=req.mysql_table,
+        mysql_max_rows=req.mysql_max_rows,
+        require_in=req.require_in,
+    )
 
 

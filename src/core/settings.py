@@ -32,7 +32,7 @@ class AppSettings(BaseSettings):
     vikingdb_collection_name: str = Field(validation_alias="VIKINGDB_COLLECTION_NAME")
     vikingdb_index_name: str = Field(default="", validation_alias="VIKINGDB_INDEX_NAME")
     vikingdb_enable_influence_filter: bool = Field(default=True, validation_alias="VIKINGDB_ENABLE_INFLUENCE_FILTER")
-    vikingdb_default_limit: int = Field(default=10, validation_alias="VIKINGDB_LIMIT")
+    vikingdb_default_limit: int = Field(default=100, validation_alias="VIKINGDB_LIMIT")
     vikingdb_need_instruction: bool = Field(default=True, validation_alias="VIKINGDB_NEED_INSTRUCTION")
     vikingdb_default_output_fields: str = Field(
         default="video_id,landscape_video,influencer,video_duration,content_structure",
@@ -51,6 +51,20 @@ class AppSettings(BaseSettings):
     mysql_password: Optional[str] = Field(default=None, validation_alias="MYSQL_PASSWORD")
     mysql_db: Optional[str] = Field(default=None, validation_alias="MYSQL_DB")
     mysql_charset: str = Field(default="utf8mb4", validation_alias="MYSQL_CHARSET")
+    mysql_table: str = Field(
+        default="mandasike_qianchuan_room_daily_dimension",
+        validation_alias="MYSQL_TABLE"
+    )
+    mysql_max_in: int = Field(default=100, ge=1, le=500, validation_alias="MYSQL_MAX_IN")
+    mysql_max_rows: int = Field(default=5000, ge=1, le=50000, validation_alias="MYSQL_MAX_ROWS")
+    
+    # ---- VikingDB Agent Graph 特定配置（可选） ----
+    # 如果设置，将覆盖 VIKINGDB_OUTPUT_FIELDS 用于 Agent Graph
+    # 格式：逗号分隔的字段名，如 "influencer,intent_analysis,landscape_video"
+    vkdb_output_fields: Optional[str] = Field(default=None, validation_alias="VIKINGDB_AGENT_OUTPUT_FIELDS")
+    
+    # ---- CORS 配置 ----
+    cors_origins: Optional[str] = Field(default=None, validation_alias="CORS_ORIGINS")
 
     def resolve_index_name(self) -> str:
         idx = (self.vikingdb_index_name or "").strip()
