@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 from pathlib import Path
@@ -9,12 +10,30 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_community.chat_models import ChatTongyi
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from src.core.settings import AppSettings
 from src.infra.vkdb.join import extract_join_info_from_vkdb_item
 
 logger = logging.getLogger(__name__)
+
+_TAG_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+def _require_non_empty(value: str, field_name: str) -> str:
+    v = (value or "").strip()
+    if not v:
+        raise ValueError(f"{field_name} must be non-empty")
+    if v.lower() == "unknown":
+        raise ValueError(f"{field_name} must not be 'Unknown'")
+    return v
+
+
+def _require_tag(value: str, field_name: str) -> str:
+    v = _require_non_empty(value, field_name)
+    if not _TAG_RE.match(v):
+        raise ValueError(f"{field_name} must match pattern {_TAG_RE.pattern}, got: {v!r}")
+    return v
 
 
 class StructuredIntentResult(BaseModel):
@@ -64,31 +83,114 @@ def parse_single_intent_analysis(
         )
     
     try:
-        # 使用结构化输出
+        # 使用更严格的结构化输出：避免“空dict也算成功”导致聚合全是Unknown
+        class NarrativeAnalysis(BaseModel):
+            script_archetype: str = Field(..., description="Narrative archetype, PascalCase or known enum")
+            narrative_chain: str = Field(..., description="3-5 nodes chain: Node -> Node -> Node")
+            pacing: str = Field(..., description="Fast|Moderate|Slow")
+
+            @field_validator("script_archetype")
+            @classmethod
+            def _v_script_archetype(cls, v: str) -> str:
+                return _require_tag(v, "script_archetype")
+
+            @field_validator("narrative_chain")
+            @classmethod
+            def _v_narrative_chain(cls, v: str) -> str:
+                vv = _require_non_empty(v, "narrative_chain")
+                if "->" not in vv:
+                    raise ValueError("narrative_chain must contain '->'")
+                return vv
+
+            @field_validator("pacing")
+            @classmethod
+            def _v_pacing(cls, v: str) -> str:
+                vv = _require_non_empty(v, "pacing")
+                allowed = {"Fast", "Moderate", "Slow"}
+                if vv not in allowed:
+                    raise ValueError(f"pacing must be one of {sorted(allowed)}")
+                return vv
+
+        class TacticalBreakdown(BaseModel):
+            opening_strategy: str = Field(..., description="Opening strategy tag, Snake_Case")
+            core_selling_points: List[str] = Field(..., description="1-5 core hooks tags")
+            closing_trigger: str = Field(..., description="Closing trigger tag, Snake_Case")
+            dominant_emotion: str = Field(..., description="Excitement|Anxiety|Curiosity|Humor|Trust")
+
+            @field_validator("opening_strategy")
+            @classmethod
+            def _v_opening_strategy(cls, v: str) -> str:
+                return _require_tag(v, "opening_strategy")
+
+            @field_validator("closing_trigger")
+            @classmethod
+            def _v_closing_trigger(cls, v: str) -> str:
+                return _require_tag(v, "closing_trigger")
+
+            @field_validator("core_selling_points")
+            @classmethod
+            def _v_core_selling_points(cls, v: List[str]) -> List[str]:
+                if not v or len(v) == 0:
+                    raise ValueError("core_selling_points must contain at least 1 item")
+                cleaned: List[str] = []
+                for item in v[:5]:
+                    cleaned.append(_require_tag(item, "core_selling_points[]"))
+                return cleaned
+
+            @field_validator("dominant_emotion")
+            @classmethod
+            def _v_dominant_emotion(cls, v: str) -> str:
+                vv = _require_non_empty(v, "dominant_emotion")
+                allowed = {"Excitement", "Anxiety", "Curiosity", "Humor", "Trust"}
+                if vv not in allowed:
+                    raise ValueError(f"dominant_emotion must be one of {sorted(allowed)}")
+                return vv
+
+        class InnovationCheck(BaseModel):
+            is_innovative: bool = Field(..., description="Whether there is a novel tactic")
+            unique_tactic_desc: str = Field("", description="One-line description; empty if none")
+
         class IntentAnalysisOutput(BaseModel):
-            narrative_analysis: Dict[str, Any]
-            tactical_breakdown: Dict[str, Any]
-            innovation_check: Dict[str, Any]
+            narrative_analysis: NarrativeAnalysis
+            tactical_breakdown: TacticalBreakdown
+            innovation_check: InnovationCheck
         
         structured_llm = llm.with_structured_output(IntentAnalysisOutput)
         
         # 调用 LLM（带超时控制）
         start_time = time.time()
-        response = structured_llm.invoke([
-            SystemMessage(content=prompt_template),
-            HumanMessage(content=intent_analysis)
-        ])
+        try:
+            response = structured_llm.invoke([
+                SystemMessage(content=prompt_template),
+                HumanMessage(content=intent_analysis)
+            ])
+        except Exception as structured_error:
+            # Fallback: ask for raw JSON and validate with pydantic (handles "Extra data"/code fences).
+            logger.warning(f"⚠️ [结构化] materialId={material_id} - 结构化输出失败，尝试fallback: {structured_error}")
+            fallback_prompt = prompt_template + """
+
+重要提示（必须遵守）：
+- 只输出 JSON 对象（不要Markdown，不要代码块，不要解释）。
+- 字段必须齐全且非空，不得输出 Unknown。
+"""
+            raw = llm.invoke([
+                SystemMessage(content=fallback_prompt),
+                HumanMessage(content=intent_analysis)
+            ])
+            content = (raw.content if hasattr(raw, "content") else str(raw)).strip()
+            content = content.replace("```json", "").replace("```", "").strip()
+            start = content.find("{")
+            end = content.rfind("}")
+            if start == -1 or end == -1 or end <= start:
+                raise structured_error
+            parsed = json.loads(content[start:end + 1])
+            response = IntentAnalysisOutput.model_validate(parsed)
         elapsed = time.time() - start_time
         
         if elapsed > timeout:
             logger.warning(f"⚠️ [结构化] materialId={material_id} - 处理时间 {elapsed:.2f}s 超过超时阈值 {timeout}s")
         
-        # 转换为字典
-        structured_dict = {
-            "narrative_analysis": response.narrative_analysis,
-            "tactical_breakdown": response.tactical_breakdown,
-            "innovation_check": response.innovation_check
-        }
+        structured_dict = response.model_dump()
         
         logger.info(f"✅ [结构化] materialId={material_id} - 解析成功，耗时 {elapsed:.2f}s")
         return StructuredIntentResult(
@@ -97,7 +199,7 @@ def parse_single_intent_analysis(
             success=True
         )
     
-    except Exception as e:
+    except (ValidationError, json.JSONDecodeError, Exception) as e:
         logger.error(f"❌ [结构化] materialId={material_id} - 解析失败: {e}")
         return StructuredIntentResult(
             materialId=material_id,

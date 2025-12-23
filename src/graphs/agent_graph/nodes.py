@@ -491,7 +491,7 @@ def llm_summarize_node(settings: AppSettings):
         has_analysis = analysis_result is not None and analysis_result.get("summary") is not None
         
         if has_analysis:
-            # 新流程：整合分析洞察
+            # 新流程：整合分析洞察（调用LLM生成更易读的自然语言总结）
             logger.info("📊 [节点] llm_summarize - 检测到分析结果，使用新流程")
             
             # 构建汇总提示（整合分析洞察）
@@ -506,12 +506,13 @@ def llm_summarize_node(settings: AppSettings):
             
             key_insight = analysis_result.get("summary", {}).get("key_insight", "")
             golden_rule = analysis_result.get("summary", {}).get("golden_rule", "")
+            plot_data = analysis_result.get("plot_data", [])
+            chart_markdown = _generate_chart_image_markdown(plot_data) if plot_data else ""
             
             user_query = state.get("vkdb_query") or "查询"
             logger.info(f"📝 [节点输入] llm_summarize - 用户查询: {user_query}")
             
             # 记录完整的分析结果供诊断
-            plot_data = analysis_result.get("plot_data", [])
             logger.info(f"📊 [数据详情] llm_summarize - 接收到的分析结果:")
             logger.info(f"   - key_insight 长度: {len(key_insight)} 字符")
             logger.info(f"   - key_insight 内容预览: {key_insight[:500]}...")
@@ -519,16 +520,27 @@ def llm_summarize_node(settings: AppSettings):
             logger.info(f"   - plot_data 数量: {len(plot_data)}")
             for idx, item in enumerate(plot_data[:5], 1):  # 只显示前5个
                 logger.info(f"   - plot_data[{idx}]: {item}")
-            
-            human_prompt = f"""用户查询：{user_query}
+
+            # 让输出“图表先行”但仍保持原先的可读性：通过prompt强制首段固定区块
+            # 注意：chart_markdown 可能为空（如QuickChart生成失败），此时不要求图表区块。
+            chart_block = ""
+            if chart_markdown.strip():
+                chart_block = f"""### 📊 数据看板
+{chart_markdown}
+
+### 💡 黄金法则
+> **{golden_rule}**
+
+---
+
+"""
+
+            human_prompt = f"""{chart_block}用户查询：{user_query}
 
 AI分析师洞察：
 {key_insight}
 
-黄金法则：
-{golden_rule}
-
-请基于以上洞察，生成一个清晰、有用的总结回复。"""
+请基于以上洞察，生成一个清晰、有用的总结回复（用自然语言，便于快速阅读）。"""
             
             logger.info(f"📊 [数据详情] llm_summarize - 完整 human_prompt 内容:\n{human_prompt}")
         else:
